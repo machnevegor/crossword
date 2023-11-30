@@ -300,7 +300,7 @@ class Individual:
                 island.append(gene)
 
                 for adjacent_genes in map(
-                        lambda char: self.word_genes[char.word], gene
+                    lambda char: self.word_genes[char.word], gene
                 ):
                     stack += adjacent_genes
 
@@ -352,7 +352,8 @@ class Individual:
             # The set of genome and gene components are disjointed.
             assert not self.genome, "Non-insertable gene"
 
-            # The genome is empty and the initial gene needs to be inserted into the individual.
+            # The genome is empty and the initial gene needs to be
+            # inserted into the individual.
             return self._init_genome(gene)
 
         # Preliminary insertion checks.
@@ -433,9 +434,9 @@ class Individual:
         col_size = max_loc.col - min_loc.col + 1
 
         transposed = (
-                (row_size >= ROW_SIZE or col_size >= COL_SIZE)
-                and row_size < COL_SIZE
-                and col_size < ROW_SIZE
+            (row_size >= ROW_SIZE or col_size >= COL_SIZE)
+            and row_size < COL_SIZE
+            and col_size < ROW_SIZE
         )
 
         # Adjust the grid.
@@ -523,8 +524,8 @@ class Individual:
                     if (orthogonal_char := self.grid[loc].hor) is None:
                         # Check the cells to the left and right of the word.
                         for adjacent_loc in (
-                                Loc(row=loc.row, col=loc.col - 1),
-                                Loc(row=loc.row, col=loc.col + 1),
+                            Loc(row=loc.row, col=loc.col - 1),
+                            Loc(row=loc.row, col=loc.col + 1),
                         ):
                             if self.grid[adjacent_loc]:
                                 return False
@@ -551,8 +552,8 @@ class Individual:
                     if (orthogonal_char := self.grid[loc].ver) is None:
                         # Check the cells above and below the word.
                         for adjacent_loc in (
-                                Loc(row=loc.row - 1, col=loc.col),
-                                Loc(row=loc.row + 1, col=loc.col),
+                            Loc(row=loc.row - 1, col=loc.col),
+                            Loc(row=loc.row + 1, col=loc.col),
                         ):
                             if self.grid[adjacent_loc]:
                                 return False
@@ -638,7 +639,6 @@ class Individual:
         Args:
             a (Char): The A-component of the gene.
             b (Char): The B-component of the gene.
-
         """
         gene = Gene.safe_init(a=a, b=b)
 
