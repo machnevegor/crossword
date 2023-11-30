@@ -10,7 +10,7 @@ from contextlib import suppress
 from copy import copy
 from dataclasses import dataclass, field
 from enum import Enum
-from random import random, choice
+from random import random, choice, sample
 from re import match
 from typing import Iterable
 
@@ -19,18 +19,20 @@ from typing import Iterable
 WORD_PATTERN = r"^[a-z]{2,20}$"
 """Regular expression to assert a crossword word."""
 
+MUTATION_ATTEMPTS = 10
+"""The number of attempts to mutate an individual."""
+GENOME_EXTENSION_RATE = 0.5
+"""The probability that a mutation will lead to genome expansion."""
+GENOME_SHRINKAGE_RATE = 0.01
+"""The probability that a mutation will lead to genome shrinkage."""
+
 ROW_SIZE = 20
 """Row size of the crossword grid."""
 COL_SIZE = 20
 """Column size of the crossword grid."""
 
-MUTATION_ATTEMPTS = 5
-"""The number of attempts to mutate an individual."""
-GENOME_EXTENSION_RATE = 0.5
-"""The probability that a mutation will lead to genome expansion."""
-GENOME_SHRINKAGE_RATE = 0.1
-"""The probability that a mutation will lead to genome shrinkage."""
-
+POPULATION_LIMIT = 256
+"""Population size limit after one evolutionary step."""
 
 # --- DATA TYPES --- #
 
@@ -101,9 +103,17 @@ class Loc:
         return Loc(row=self.col, col=self.row)
 
     @classmethod
-    def absolute(cls, loc: Loc, min_loc: Loc) -> Loc:
-        """Get the absolute location."""
-        return cls(row=loc.row - min_loc.row, col=loc.col - min_loc.col)
+    def transform(cls, loc: Loc, origin: Loc) -> Loc:
+        """Transform coordinate to new origin.
+
+        Args:
+            loc (Loc): The coordinate to transform.
+            origin (Loc): The new origin.
+
+        Returns:
+            Loc: The transformed coordinate.
+        """
+        return cls(row=loc.row - origin.row, col=loc.col - origin.col)
 
 
 @dataclass
@@ -152,10 +162,6 @@ class WordHead:
     """The head's location on the crossword grid."""
     ori: Ori
     """The head's direction on the crossword grid."""
-
-    def __str__(self) -> str:
-        """Serialize the word head."""
-        return f"{self.loc.row} {self.loc.col} {self.ori.value}"
 
 
 # --- I/O --- #
@@ -235,9 +241,27 @@ def output_individual(context: Context, filename: str, individual: Individual) -
         filename (str): The path to the output file.
         individual (Individual): The individual to output.
     """
+    min_loc, max_loc = individual.boundaries
+
+    # Check if the grid needs to be transposed.
+    row_size = max_loc.row - min_loc.row + 1
+    col_size = max_loc.col - min_loc.col + 1
+
+    transposed = (
+        (row_size >= ROW_SIZE or col_size >= COL_SIZE)
+        and row_size < COL_SIZE
+        and col_size < ROW_SIZE
+    )
+
     with open(filename, "w", encoding="utf-8") as file:
+        # Write word-by-word.
         for head in map(lambda word: individual.word_head[word], context.words):
-            file.write(f"{head}\n")
+            absolute_loc = Loc.transform(head.loc, min_loc)
+            adjusted_loc = absolute_loc.T if transposed else absolute_loc
+
+            adjusted_ori = ~head.ori if transposed else head.ori
+
+            file.write(f"{adjusted_loc.row} {adjusted_loc.col} {adjusted_ori.value}\n")
 
 
 # --- INDIVIDUAL --- #
@@ -434,29 +458,15 @@ class Individual:
         Returns:
             dict[Loc, str]: Adjusted preserialized grid.
         """
-        min_loc, max_loc = self.boundaries
+        origin, _ = self.boundaries
 
-        # Check if the grid needs to be transposed.
-        row_size = max_loc.row - min_loc.row + 1
-        col_size = max_loc.col - min_loc.col + 1
-
-        transposed = (
-            (row_size >= ROW_SIZE or col_size >= COL_SIZE)
-            and row_size < COL_SIZE
-            and col_size < ROW_SIZE
-        )
-
-        # Adjust the grid.
         adjusted_grid = {}
 
         for loc, cell in self.grid.items():
             if not cell:
                 continue
 
-            # Normalize the location.
-            absolute_loc = Loc.absolute(loc, min_loc)
-            adjusted_loc = absolute_loc.T if transposed else absolute_loc
-
+            adjusted_loc = Loc.transform(loc, origin)
             char = cell.hor or cell.ver
 
             adjusted_grid[adjusted_loc] = char.value
@@ -658,6 +668,18 @@ class Individual:
 # --- GENETIC ALGORITHM --- #
 
 
+def initialize_population(context: Context) -> list[Individual]:
+    """Initialize the population of the crossword generation.
+
+    Args:
+        context (Context): The context of crossword generation.
+
+    Returns:
+        list[Individual]: The initial population.
+    """
+    return [Individual.safe_init({gene}) for gene in context.genes]
+
+
 def crossover(mother: Individual, father: Individual) -> Individual:
     """Crossover of two individuals to produce an offspring.
 
@@ -714,52 +736,118 @@ def mutate(context: Context, individual: Individual) -> None:
             individual.shrink_genome(gene)
 
 
-def fitness(context: Context, individual: Individual) -> float:
-    return len(individual.genome) / len(context.genes)
+def valid_size(individual: Individual) -> bool:
+    """Check if the size of the individual is valid. The function takes
+    into account the transposed grid.
+
+    Args:
+        individual (Individual): The individual to check.
+
+    Returns:
+        bool: True if the size is valid, False otherwise.
+    """
+    min_loc, max_loc = individual.boundaries
+
+    row_size = max_loc.row - min_loc.row + 1
+    col_size = max_loc.col - min_loc.col + 1
+
+    return (
+        row_size <= ROW_SIZE
+        and col_size <= COL_SIZE
+        or row_size <= COL_SIZE
+        and col_size <= ROW_SIZE
+    )
+
+
+def fitness(individual: Individual) -> float:
+    """Evaluate the individual's fitness.
+
+    Args:
+        individual (Individual): The individual to evaluate.
+
+    Returns:
+        float: The individual's fitness.
+    """
+    if not valid_size(individual):
+        return 0
+
+    island_count = len(tuple(individual.islands))
+
+    if island_count == 0:
+        return 0
+
+    return -len(individual.word_head) / island_count
+
+
+def evolve_population(
+    context: Context, prev_step: list[Individual]
+) -> list[Individual]:
+    """Evolve the population of the crossword generation.
+
+    Args:
+        context (Context): The context of crossword generation.
+        prev_step (list[Individual]): The previous population.
+
+    Returns:
+        list[Individual]: The evolved population.
+    """
+    population = list(prev_step)
+
+    alpha_partner = prev_step[0]
+    beta_partners = sample(prev_step, k=len(context.words))
+
+    for beta_partner in beta_partners:
+        offspring = crossover(alpha_partner, beta_partner)
+
+        mutate(context, offspring)
+
+        population.append(offspring)
+
+    population.sort(key=fitness)
+
+    return population[:POPULATION_LIMIT]
+
+
+def generate(context: Context) -> Individual:
+    """Generate the crossword.
+
+    Args:
+        context (Context): The context of crossword generation.
+
+    Returns:
+        Individual: The generated crossword.
+    """
+    population = initialize_population(context)
+
+    while True:
+        # Evolutionary step.
+        population = evolve_population(context, population)
+
+        # Check if the population contains a valid individual.
+        predicate = next(
+            filter(
+                lambda individual: len(individual.word_head) == len(context.words)
+                and valid_size(individual),
+                population,
+            ),
+            None,
+        )
+
+        if predicate:
+            return predicate
 
 
 def main() -> None:
-    # Context initialization.
+    # Initialize the context.
     context = Context.from_file("words.txt")
 
-    # Initial population generation.
-    population = [Individual.safe_init({gene}) for gene in context.genes]
+    # Generate the crossword.
+    individual = generate(context)
 
-    # Genetic algorithm.
-    for _ in range(200):
-        # Selection.
-        population = sorted(
-            population, key=lambda individual: fitness(context, individual)
-        )
+    # Output the crossword.
+    output_individual(context, "output.txt", individual)
 
-        mother = population[-1]
-        father = choice(population[:-1])
-
-        # Crossover.
-        offspring = crossover(mother, father)
-
-        # Mutation.
-        mutate(context, offspring)
-
-        # print()
-        # print(fitness(context, offspring))
-        # print()
-        # print(offspring)
-
-        # Replacement.
-        population = population[1:] + [offspring]
-
-    # Output.
-    best_individual = max(
-        population, key=lambda individual: fitness(context, individual)
-    )
-
-    print()
-    print(fitness(context, best_individual))
-    print()
-    print(best_individual)
-
-    # output_individual(context, "output.txt", best_individual)
+    print(individual)
 
 
 if __name__ == "__main__":
