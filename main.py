@@ -6,8 +6,11 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from contextlib import suppress
+from copy import copy
 from dataclasses import dataclass, field
 from enum import Enum
+from random import random, choice
 from re import match
 from typing import Iterable
 
@@ -247,8 +250,9 @@ class Individual:
     genome: set[Gene] = field(default_factory=set)
     """The collection of genes composing the genome."""
     grid: defaultdict[Loc, Cell] = field(default_factory=lambda: defaultdict(Cell))
-    """The crossword grid. Crossword grid. Locations are relative to
-    the first word inserted.
+    """The crossword grid. The grid is sparse, i.e. only cells with
+    chars are present. Locations are relative to the first word
+    inserted.
     """
 
     word_head: dict[str, WordHead] = field(default_factory=dict)
@@ -268,7 +272,10 @@ class Individual:
         min_row, max_row = 0, 0
         min_col, max_col = 0, 0
 
-        for loc in self.grid:
+        for loc, cell in self.grid.items():
+            if not cell:
+                continue
+
             min_row, max_row = min(min_row, loc.row), max(max_row, loc.row)
             min_col, max_col = min(min_col, loc.col), max(max_col, loc.col)
 
@@ -651,8 +658,108 @@ class Individual:
 # --- GENETIC ALGORITHM --- #
 
 
+def crossover(mother: Individual, father: Individual) -> Individual:
+    """Crossover of two individuals to produce an offspring.
+
+    Args:
+        mother (Individual): The mother (first parent).
+        father (Individual): The father (second parent).
+
+    Returns:
+        Individual: The offspring.
+    """
+    offspring = copy(mother)
+
+    for word, genes in father.word_genes.items():
+        if word in mother.word_head:
+            # Saturation of the offspring's genome (same as the
+            # mother's genome) with the father's genes.
+            for gene in genes:
+                with suppress(AssertionError):
+                    offspring.extend_genome(gene)
+
+    return offspring
+
+
+def mutate(context: Context, individual: Individual) -> None:
+    """Mutate the individual's genome.
+
+    Args:
+        context (Context): The context of crossword generation.
+        individual (Individual): The individual to mutate.
+    """
+    for _ in range(MUTATION_ATTEMPTS):
+        if random() < GENOME_EXTENSION_RATE:
+            target_genes = set()
+
+            for word, genes in context.word_genes.items():
+                if word in individual.word_head:
+                    target_genes |= genes
+
+            target_genes -= individual.genome
+
+            if not target_genes:
+                continue
+
+            gene = choice(tuple(target_genes))
+
+            with suppress(AssertionError):
+                individual.extend_genome(gene)
+        elif random() < GENOME_SHRINKAGE_RATE:
+            if not individual.genome:
+                continue
+
+            gene = choice(tuple(individual.genome))
+
+            individual.shrink_genome(gene)
+
+
+def fitness(context: Context, individual: Individual) -> float:
+    return len(individual.genome) / len(context.genes)
+
+
 def main() -> None:
-    ...
+    # Context initialization.
+    context = Context.from_file("words.txt")
+
+    # Initial population generation.
+    population = [Individual.safe_init({gene}) for gene in context.genes]
+
+    # Genetic algorithm.
+    for _ in range(200):
+        # Selection.
+        population = sorted(
+            population, key=lambda individual: fitness(context, individual)
+        )
+
+        mother = population[-1]
+        father = choice(population[:-1])
+
+        # Crossover.
+        offspring = crossover(mother, father)
+
+        # Mutation.
+        mutate(context, offspring)
+
+        # print()
+        # print(fitness(context, offspring))
+        # print()
+        # print(offspring)
+
+        # Replacement.
+        population = population[1:] + [offspring]
+
+    # Output.
+    best_individual = max(
+        population, key=lambda individual: fitness(context, individual)
+    )
+
+    print()
+    print(fitness(context, best_individual))
+    print()
+    print(best_individual)
+
+    # output_individual(context, "output.txt", best_individual)
 
 
 if __name__ == "__main__":
