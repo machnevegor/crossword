@@ -726,7 +726,7 @@ class Individual:
                     # Word head registration.
                     if i == 0:
                         self.word_head[target.word] = WordHead(
-                            word=target.word, loc=loc, ori=~orientor.ori
+                            word=target.word, loc=loc, ori=Ori.VER
                         )
                 case Ori.VER:
                     char = Char(word=target.word, index=i)
@@ -746,7 +746,7 @@ class Individual:
                     # Word head registration.
                     if i == 0:
                         self.word_head[target.word] = WordHead(
-                            word=target.word, loc=loc, ori=~orientor.ori
+                            word=target.word, loc=loc, ori=Ori.HOR
                         )
 
     def _uncross(self, a: Char, b: Char) -> None:
