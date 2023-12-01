@@ -53,7 +53,7 @@ class Char:
 
     def __post_init__(self) -> None:
         """Post-initialization checks."""
-        assert 0 <= self.index < len(self.word), "Invalid char index"
+        assert 0 <= self.index < len(self.word), "Invalid char, index out of range"
 
 
 @dataclass(frozen=True)
@@ -124,6 +124,18 @@ class Cell:
     """The horizontal char of the cell."""
     ver: Char | None = field(default=None)
     """The vertical char of the cell."""
+
+    @property
+    def value(self) -> str | None:
+        """The value of the cell."""
+        if not self:
+            return None
+
+        assert (
+            self.hor is None or self.ver is None or self.hor.value == self.ver.value
+        ), "Invalid cell, chars do NOT match"
+
+        return self.hor.value if self.hor else self.ver.value
 
     def __bool__(self) -> bool:
         return self.hor is not None or self.ver is not None
@@ -352,7 +364,7 @@ class Individual:
             # Padding.
             serialized += " " * (loc.col - prev_col)
             # Char.
-            serialized += char
+            serialized += char.value
 
             prev_col = loc.col + 1
 
@@ -396,7 +408,8 @@ class Individual:
         Args:
             gene (Gene): The gene to remove.
         """
-        assert gene in self.genome, "The gene is not in the genome"
+        if gene not in self.genome:
+            return
 
         for head in map(lambda char: self.word_head[char.word], gene):
             cursor = head.loc
@@ -445,15 +458,16 @@ class Individual:
 
         return individual
 
-    def adjust_grid(self) -> dict[Loc, str]:
+    def adjust_grid(self) -> dict[Loc, Cell]:
         """Make the grid coordinates non-negative.
 
         Returns:
-            dict[Loc, str]: Adjusted printable grid.
+            dict[Loc, Cell]: Adjusted grid.
         """
         # Find the new starting point of the grid.
         origin, _ = self.boundaries
 
+        # Adjust the grid.
         adjusted_grid = {}
 
         for loc, cell in self.grid.items():
@@ -462,9 +476,7 @@ class Individual:
 
             adjusted_loc = Loc.transform(loc, origin)
 
-            char = cell.hor or cell.ver
-
-            adjusted_grid[adjusted_loc] = char.value
+            adjusted_grid[adjusted_loc] = cell
 
         return adjusted_grid
 
@@ -698,7 +710,7 @@ class Individual:
 
 
 def initialize_population(context: Context) -> list[Individual]:
-    """Initialize the population of the crossword generation.
+    """Create the initial population for crossword generation.
 
     Args:
         context (Context): The context of crossword generation.
@@ -711,7 +723,7 @@ def initialize_population(context: Context) -> list[Individual]:
 
 def crossover(mother: Individual, father: Individual) -> None:
     """Crossover of two individuals to produce an offspring. The
-    function does not create new offspring, it just saturates one
+    function does NOT create new offspring, it just saturates one
     of the parents.
 
     Args:
@@ -861,6 +873,7 @@ def main() -> None:
     # Output the crossword.
     output_individual(context, "output.txt", individual)
 
+    # Print the crossword.
     print(individual)
 
 
