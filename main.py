@@ -7,10 +7,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from contextlib import suppress
-from copy import copy
 from dataclasses import dataclass, field
 from enum import Enum
-from random import random, choice, sample
+from random import random, choice
 from re import match
 from typing import Iterable
 
@@ -31,8 +30,9 @@ ROW_SIZE = 20
 COL_SIZE = 20
 """Column size of the crossword grid."""
 
-POPULATION_LIMIT = 256
+POPULATION_LIMIT = 512
 """Population size limit after one evolutionary step."""
+
 
 # --- DATA TYPES --- #
 
@@ -163,6 +163,14 @@ class WordHead:
     ori: Ori
     """The head's direction on the crossword grid."""
 
+    def __str__(self) -> str:
+        """Serialize the word head to a string.
+
+        Returns:
+            str: The serialized word head.
+        """
+        return f"{self.loc.row} {self.loc.col} {self.ori.value}"
+
 
 # --- I/O --- #
 
@@ -241,27 +249,13 @@ def output_individual(context: Context, filename: str, individual: Individual) -
         filename (str): The path to the output file.
         individual (Individual): The individual to output.
     """
-    min_loc, max_loc = individual.boundaries
-
-    # Check if the grid needs to be transposed.
-    row_size = max_loc.row - min_loc.row + 1
-    col_size = max_loc.col - min_loc.col + 1
-
-    transposed = (
-        (row_size >= ROW_SIZE or col_size >= COL_SIZE)
-        and row_size < COL_SIZE
-        and col_size < ROW_SIZE
-    )
+    # Make the coordinates non-negative.
+    heads = individual.adjust_heads()
 
     with open(filename, "w", encoding="utf-8") as file:
         # Write word-by-word.
-        for head in map(lambda word: individual.word_head[word], context.words):
-            absolute_loc = Loc.transform(head.loc, min_loc)
-            adjusted_loc = absolute_loc.T if transposed else absolute_loc
-
-            adjusted_ori = ~head.ori if transposed else head.ori
-
-            file.write(f"{adjusted_loc.row} {adjusted_loc.col} {adjusted_ori.value}\n")
+        for head in map(lambda word: heads[word], context.words):
+            file.write(f"{head}\n")
 
 
 # --- INDIVIDUAL --- #
@@ -343,11 +337,11 @@ class Individual:
         Returns:
             str: The serialized individual.
         """
-        serialized = ""
-        prev_row, prev_col = 0, 0
-
         # Build a route for serialization.
-        route = sorted(self._adjust_grid().items(), key=lambda item: item[0])
+        route = sorted(self.adjust_grid().items(), key=lambda item: item[0])
+
+        prev_row, prev_col = 0, 0
+        serialized = ""
 
         for loc, char in route:
             if loc.row != prev_row:
@@ -451,13 +445,13 @@ class Individual:
 
         return individual
 
-    def _adjust_grid(self) -> dict[Loc, str]:
-        """Make the coordinates non-negative and try to fit within the
-        size constraints of the grid.
+    def adjust_grid(self) -> dict[Loc, str]:
+        """Make the grid coordinates non-negative.
 
         Returns:
-            dict[Loc, str]: Adjusted preserialized grid.
+            dict[Loc, str]: Adjusted printable grid.
         """
+        # Find the new starting point of the grid.
         origin, _ = self.boundaries
 
         adjusted_grid = {}
@@ -467,11 +461,46 @@ class Individual:
                 continue
 
             adjusted_loc = Loc.transform(loc, origin)
+
             char = cell.hor or cell.ver
 
             adjusted_grid[adjusted_loc] = char.value
 
         return adjusted_grid
+
+    def adjust_heads(self) -> dict[str, WordHead]:
+        """Make the coordinates non-negative and transpose the
+        crossword grid as necessary.
+
+        Returns:
+            dict[str, WordHead]: Adjusted word-to-head mapping.
+        """
+        min_loc, max_loc = self.boundaries
+
+        # Check if the grid needs to be transposed.
+        row_size = max_loc.row - min_loc.row + 1
+        col_size = max_loc.col - min_loc.col + 1
+
+        transpose = (
+            (row_size >= ROW_SIZE or col_size >= COL_SIZE)
+            and row_size < COL_SIZE
+            and col_size < ROW_SIZE
+        )
+
+        # Adjust the word-to-head mapping.
+        adjusted_heads = {}
+
+        for word, head in self.word_head.items():
+            absolute_loc = Loc.transform(head.loc, min_loc)
+            adjusted_loc = absolute_loc.T if transpose else absolute_loc
+
+            adjusted_ori = ~head.ori if transpose else head.ori
+
+            adjusted_heads[word] = WordHead(
+                word=word, loc=adjusted_loc, ori=adjusted_ori
+            )
+
+        return adjusted_heads
 
     def _init_genome(self, gene: Gene) -> None:
         """Initialize the genome with the first gene.
@@ -680,27 +709,21 @@ def initialize_population(context: Context) -> list[Individual]:
     return [Individual.safe_init({gene}) for gene in context.genes]
 
 
-def crossover(mother: Individual, father: Individual) -> Individual:
-    """Crossover of two individuals to produce an offspring.
+def crossover(mother: Individual, father: Individual) -> None:
+    """Crossover of two individuals to produce an offspring. The
+    function does not create new offspring, it just saturates one
+    of the parents.
 
     Args:
-        mother (Individual): The mother (first parent).
-        father (Individual): The father (second parent).
-
-    Returns:
-        Individual: The offspring.
+        mother (Individual): Parent to saturate.
+        father (Individual): The donor of genes.
     """
-    offspring = copy(mother)
-
     for word, genes in father.word_genes.items():
         if word in mother.word_head:
-            # Saturation of the offspring's genome (same as the
-            # mother's genome) with the father's genes.
+            # Saturation of the mother's genome with the father's genes.
             for gene in genes:
                 with suppress(AssertionError):
-                    offspring.extend_genome(gene)
-
-    return offspring
+                    mother.extend_genome(gene)
 
 
 def mutate(context: Context, individual: Individual) -> None:
@@ -736,9 +759,9 @@ def mutate(context: Context, individual: Individual) -> None:
             individual.shrink_genome(gene)
 
 
-def valid_size(individual: Individual) -> bool:
+def valid(individual: Individual) -> bool:
     """Check if the size of the individual is valid. The function takes
-    into account the transposed grid.
+    into account the transposed variant of the grid.
 
     Args:
         individual (Individual): The individual to check.
@@ -768,15 +791,7 @@ def fitness(individual: Individual) -> float:
     Returns:
         float: The individual's fitness.
     """
-    if not valid_size(individual):
-        return 0
-
-    island_count = len(tuple(individual.islands))
-
-    if island_count == 0:
-        return 0
-
-    return -len(individual.word_head) / island_count
+    return -len(individual.genome)
 
 
 def evolve_population(
@@ -791,17 +806,17 @@ def evolve_population(
     Returns:
         list[Individual]: The evolved population.
     """
-    population = list(prev_step)
+    alpha = prev_step[0]
+    population = [alpha]
 
-    alpha_partner = prev_step[0]
-    beta_partners = sample(prev_step, k=len(context.words))
+    for beta in prev_step:
+        crossover(beta, alpha)
 
-    for beta_partner in beta_partners:
-        offspring = crossover(alpha_partner, beta_partner)
+        mutate(context, beta)
 
-        mutate(context, offspring)
-
-        population.append(offspring)
+        for island in beta.islands:
+            if valid(island):
+                population.append(island)
 
     population.sort(key=fitness)
 
@@ -826,8 +841,7 @@ def generate(context: Context) -> Individual:
         # Check if the population contains a valid individual.
         predicate = next(
             filter(
-                lambda individual: len(individual.word_head) == len(context.words)
-                and valid_size(individual),
+                lambda individual: len(individual.word_head) == len(context.words),
                 population,
             ),
             None,
