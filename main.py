@@ -803,7 +803,11 @@ def mutate(context: Context, individual: Individual) -> None:
         context (Context): The context of crossword generation.
         individual (Individual): The individual to mutate.
     """
-    for _ in range(MUTATION_ATTEMPTS):
+    attemts = 0
+    while attemts < MUTATION_ATTEMPTS:
+        attemts += 1
+
+        # Genome extension.
         if random() < GENOME_EXTENSION_RATE:
             target_genes = set()
 
@@ -816,17 +820,27 @@ def mutate(context: Context, individual: Individual) -> None:
             if not target_genes:
                 continue
 
+            # Gene selection.
             gene = choice(tuple(target_genes))
 
             with suppress(AssertionError):
+                # Mutation (attempt).
                 individual.extend_genome(gene)
-        elif random() < GENOME_SHRINKAGE_RATE:
+
+                break
+
+        # Genome shrinkage.
+        if random() < GENOME_SHRINKAGE_RATE:
             if not individual.genome:
                 continue
 
+            # Gene selection.
             gene = choice(tuple(individual.genome))
 
+            # Mutation.
             individual.shrink_genome(gene)
+
+            break
 
 
 def valid(individual: Individual) -> bool:
