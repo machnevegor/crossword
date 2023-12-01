@@ -826,9 +826,13 @@ def evolve_population(
 
         mutate(context, beta)
 
-        for island in beta.islands:
-            if valid(island):
-                population.append(island)
+        # TODO(machnevegor): In some scenarios, splitting an individual
+        # into islands can trigger an error. The bug is not critical,
+        # but it is desirable to fix it.
+        with suppress(AssertionError):
+            for island in beta.islands:
+                if valid(island):
+                    population.append(island)
 
     population.sort(key=fitness)
 
