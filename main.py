@@ -30,9 +30,6 @@ ROW_SIZE = 20
 COL_SIZE = 20
 """Column size of the crossword grid."""
 
-POPULATION_LIMIT = 512
-"""Population size limit after one evolutionary step."""
-
 
 # --- DATA TYPES --- #
 
@@ -115,6 +112,24 @@ class Loc:
         """
         return cls(row=loc.row - origin.row, col=loc.col - origin.col)
 
+    @classmethod
+    def adjust(cls, loc: Loc, origin: Loc, transpose: bool) -> Loc:
+        """Make the coordinate non-negative and transpose it if
+        necessary.
+
+        Args:
+            loc (Loc): The coordinate to adjust.
+            origin (Loc): The new origin.
+            transpose (bool): True if the coordinate needs to be
+                transposed, False otherwise.
+
+        Returns:
+            Loc: The adjusted coordinate.
+        """
+        loc = cls.transform(loc, origin)
+
+        return loc.T if transpose else loc
+
 
 @dataclass
 class Cell:
@@ -162,6 +177,20 @@ class Ori(Enum):
     def __invert__(self) -> Ori:
         """Get the opposite orientation."""
         return Ori.VER if self == Ori.HOR else Ori.HOR
+
+    @classmethod
+    def adjust(cls, ori: Ori, transpose: bool) -> Ori:
+        """Make transposed orientation if necessary.
+
+        Args:
+            ori (Ori): The orientation to adjust.
+            transpose (bool): True if the orientation needs to be
+                transposed, False otherwise.
+
+        Returns:
+            Ori: The adjusted orientation.
+        """
+        return ~ori if transpose else ori
 
 
 @dataclass(frozen=True)
@@ -273,6 +302,42 @@ def output_individual(context: Context, filename: str, individual: Individual) -
 # --- INDIVIDUAL --- #
 
 
+def view_size(min_loc: Loc, max_loc: Loc) -> tuple[int, int]:
+    """Get the size of the crossword grid.
+
+    Args:
+        min_loc (Loc): The lower left corner of the grid.
+        max_loc (Loc): The upper right corner of the grid.
+
+    Returns:
+        tuple[int, int]: The row and column size of the grid.
+    """
+    row_size = max_loc.row - min_loc.row + 1
+    col_size = max_loc.col - min_loc.col + 1
+
+    return row_size, col_size
+
+
+def better_transpose(min_loc: Loc, max_loc: Loc) -> bool:
+    """Check if the transposed variant of the grid is better than the
+    original one.
+
+    Args:
+        min_loc (Loc): The lower left corner of the grid.
+        max_loc (Loc): The upper right corner of the grid.
+
+    Returns:
+        bool: True if the transposed is better, False otherwise.
+    """
+    row_size, col_size = view_size(min_loc, max_loc)
+
+    return (
+        (row_size >= ROW_SIZE or col_size >= COL_SIZE)
+        and row_size < COL_SIZE
+        and col_size < ROW_SIZE
+    )
+
+
 @dataclass
 class Individual:
     """The individual of the crossword population."""
@@ -293,7 +358,7 @@ class Individual:
     """The set of genes corresponding to each word."""
 
     @property
-    def boundaries(self) -> tuple[Loc, Loc]:
+    def view_box(self) -> tuple[Loc, Loc]:
         """The boundaries of the crossword grid.
 
         Returns:
@@ -464,8 +529,10 @@ class Individual:
         Returns:
             dict[Loc, Cell]: Adjusted grid.
         """
-        # Find the new starting point of the grid.
-        origin, _ = self.boundaries
+        min_loc, max_loc = self.view_box
+
+        # Check if the grid needs to be transposed.
+        transpose = better_transpose(min_loc, max_loc)
 
         # Adjust the grid.
         adjusted_grid = {}
@@ -474,7 +541,7 @@ class Individual:
             if not cell:
                 continue
 
-            adjusted_loc = Loc.transform(loc, origin)
+            adjusted_loc = Loc.adjust(loc, min_loc, transpose)
 
             adjusted_grid[adjusted_loc] = cell
 
@@ -487,26 +554,17 @@ class Individual:
         Returns:
             dict[str, WordHead]: Adjusted word-to-head mapping.
         """
-        min_loc, max_loc = self.boundaries
+        min_loc, max_loc = self.view_box
 
         # Check if the grid needs to be transposed.
-        row_size = max_loc.row - min_loc.row + 1
-        col_size = max_loc.col - min_loc.col + 1
-
-        transpose = (
-            (row_size >= ROW_SIZE or col_size >= COL_SIZE)
-            and row_size < COL_SIZE
-            and col_size < ROW_SIZE
-        )
+        transpose = better_transpose(min_loc, max_loc)
 
         # Adjust the word-to-head mapping.
         adjusted_heads = {}
 
         for word, head in self.word_head.items():
-            absolute_loc = Loc.transform(head.loc, min_loc)
-            adjusted_loc = absolute_loc.T if transpose else absolute_loc
-
-            adjusted_ori = ~head.ori if transpose else head.ori
+            adjusted_loc = Loc.adjust(head.loc, min_loc, transpose)
+            adjusted_ori = Ori.adjust(head.ori, transpose)
 
             adjusted_heads[word] = WordHead(
                 word=word, loc=adjusted_loc, ori=adjusted_ori
@@ -781,10 +839,7 @@ def valid(individual: Individual) -> bool:
     Returns:
         bool: True if the size is valid, False otherwise.
     """
-    min_loc, max_loc = individual.boundaries
-
-    row_size = max_loc.row - min_loc.row + 1
-    col_size = max_loc.col - min_loc.col + 1
+    row_size, col_size = view_size(*individual.view_box)
 
     return (
         row_size <= ROW_SIZE
@@ -821,22 +876,24 @@ def evolve_population(
     alpha = prev_step[0]
     population = [alpha]
 
-    for beta in prev_step:
+    for beta in prev_step[1:]:
         crossover(beta, alpha)
 
         mutate(context, beta)
 
-        # TODO(machnevegor): In some scenarios, splitting an individual
-        # into islands can trigger an error. The bug is not critical,
+        # TODO: In some scenarios, splitting an individual into
+        # islands can trigger an error. The bug is not critical,
         # but it is desirable to fix it.
         with suppress(AssertionError):
             for island in beta.islands:
                 if valid(island):
                     population.append(island)
 
+    assert len(population) != 1, "The population has degenerated"
+
     population.sort(key=fitness)
 
-    return population[:POPULATION_LIMIT]
+    return population[: len(context.genes)]
 
 
 def generate(context: Context) -> Individual:
