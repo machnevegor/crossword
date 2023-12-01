@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from random import random, choice
 from re import match
-from typing import Iterable
+from typing import Iterator, Iterable
 
 # --- CONSTANTS --- #
 
@@ -66,8 +66,12 @@ class Gene:
         """Post-initialization checks."""
         assert self.a < self.b, "Invalid order of gene components"
 
-    def __iter__(self) -> Iterable[Char]:
-        """Iterate over the gene components."""
+    def __iter__(self) -> Iterator[Char]:
+        """Iterate over the gene components.
+
+        Yields:
+            Char: The gene component.
+        """
         yield self.a
         yield self.b
 
@@ -216,7 +220,7 @@ class WordHead:
 # --- I/O --- #
 
 
-@dataclass
+@dataclass(kw_only=True)
 class Context:
     """The context of crossword generation."""
 
@@ -338,7 +342,7 @@ def better_transpose(min_loc: Loc, max_loc: Loc) -> bool:
     )
 
 
-@dataclass
+@dataclass(kw_only=True)
 class Individual:
     """The individual of the crossword population."""
 
@@ -377,7 +381,7 @@ class Individual:
         return Loc(row=min_row, col=min_col), Loc(row=max_row, col=max_col)
 
     @property
-    def islands(self) -> Iterable[Individual]:
+    def islands(self) -> Iterator[Individual]:
         """Disjointed gene islands of the individual's genome.
 
         Yields:
@@ -454,8 +458,7 @@ class Individual:
             # The set of genome and gene components are disjointed.
             assert not self.genome, "Non-insertable gene"
 
-            # The genome is empty and the initial gene needs to be
-            # inserted into the individual.
+            # The genome is empty and the initial gene needs to be inserted into the individual.
             return self._init_genome(gene)
 
         # Preliminary insertion checks.
@@ -895,9 +898,8 @@ def evolve_population(
 
         mutate(context, beta)
 
-        # TODO: In some scenarios, splitting an individual into
-        # islands can trigger an error. The bug is not critical,
-        # but it is desirable to fix it.
+        # TODO: In some scenarios, splitting an individual into islands can trigger an error. The bug is not
+        #  critical, but it is desirable to fix it.
         with suppress(AssertionError):
             for island in beta.islands:
                 if valid(island):
@@ -940,7 +942,7 @@ def generate(context: Context) -> Individual:
 
 def main() -> None:
     # Initialize the context.
-    context = Context.from_file("words.txt")
+    context = Context.from_file("input.txt")
 
     # Generate the crossword.
     individual = generate(context)
