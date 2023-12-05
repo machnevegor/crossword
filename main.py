@@ -75,9 +75,11 @@ class Gene:
         """Post-initialization checks.
 
         Raises:
+            AssertionError: Chars do NOT match.
             AssertionError: Components are NOT ordered.
         """
-        assert self.a < self.b, "Invalid `Gene`, components are NOT ordered"
+        assert self.a.value == self.b.value, "Invalid `Gene`, chars do NOT match"
+        assert self.a <= self.b, "Invalid `Gene`, components are NOT ordered"
 
     def __iter__(self) -> Iterator[Crosschar]:
         """Iterate over the gene components.
@@ -99,7 +101,7 @@ class Gene:
         Returns:
             Gene: The gene with the components in the proper order.
         """
-        return cls(a=a, b=b) if a < b else cls(a=b, b=a)
+        return cls(a=a, b=b) if a <= b else cls(a=b, b=a)
 
 
 @dataclass(order=True, frozen=True)
@@ -527,11 +529,9 @@ class Individual:
         assert not a_head or not b_head, "Non-insertable gene"
 
         if not a_head and not b_head:
-            # The set of genome and gene components are disjointed.
+            # The genome and gene components are disjointed.
             assert not self.genome, "Non-insertable gene"
 
-            # The genome is empty and the initial gene needs to be
-            # inserted into the individual.
             return self._init_genome(gene)
 
         orientor, shift, target = (
@@ -564,7 +564,6 @@ class Individual:
                             break
 
                         if orthogonal_char := self.grid[cursor].ver:
-                            # Uncross the orthogonal char.
                             self._uncross(self.grid[cursor].hor, orthogonal_char)
 
                         self.grid[cursor].hor = None
@@ -573,7 +572,6 @@ class Individual:
                             break
 
                         if orthogonal_char := self.grid[cursor].hor:
-                            # Uncross the orthogonal char.
                             self._uncross(self.grid[cursor].ver, orthogonal_char)
 
                         self.grid[cursor].ver = None
@@ -746,15 +744,12 @@ class Individual:
                         col=orientor.loc.col + shift,
                     )
 
-                    # Genome actualization.
                     if orthogonal_char := self.grid[loc].hor:
                         self._cross(char, orthogonal_char)
 
-                    # Grid filling.
                     self.grid[loc].ver = char
 
                     if i == 0:
-                        # Word head registration.
                         self.word_head[target.word] = WordHead(
                             word=target.word, loc=loc, ori=Ori.VER
                         )
@@ -764,15 +759,12 @@ class Individual:
                         col=orientor.loc.col - target.index + i,
                     )
 
-                    # Genome actualization.
                     if orthogonal_char := self.grid[loc].ver:
                         self._cross(char, orthogonal_char)
 
-                    # Grid filling.
                     self.grid[loc].hor = char
 
                     if i == 0:
-                        # Word head registration.
                         self.word_head[target.word] = WordHead(
                             word=target.word, loc=loc, ori=Ori.HOR
                         )
@@ -798,8 +790,7 @@ class Individual:
 def init_population(context: Context) -> list[Individual]:
     """Create the initial population for crossword generation.
 
-    Args:
-        context (Context): The context of crossword generation.
+    Args:        context (Context): The context of crossword generation.
 
     Returns:
         list[Individual]: The initial population.
@@ -808,9 +799,11 @@ def init_population(context: Context) -> list[Individual]:
 
 
 def crossover(mother: Individual, father: Individual) -> None:
-    """Crossover two individuals to create an offspring. This action
-    does not generate a fresh offspring, but instead saturates one of
-    the parents. Its intent is to expedite the evolution process.
+    """Crossover of two individuals. This function does NOT produce
+    offspring, it simply saturates the mother's genome with the
+    father's genes. It is designed to speed up gene inheritance and
+    evolution. To get offspring, use `Individual.islands` for the
+    mother.
 
     Args:
         mother (Individual): Parent to saturate.
@@ -818,7 +811,6 @@ def crossover(mother: Individual, father: Individual) -> None:
     """
     for word, genes in father.word_genes.items():
         if word in mother.word_head:
-            # Saturation of the mother's genome with the father's genes.
             for gene in genes:
                 with suppress(AssertionError):
                     mother.extend_genome(gene)
@@ -832,7 +824,6 @@ def mutate(context: Context, individual: Individual) -> None:
         individual (Individual): The individual to mutate.
     """
     if random() < GENOME_EXTENSION_RATE:
-        # Estimate the set of genes that can potentially be added to the genome.
         target_genes = set()
 
         for word, genes in context.word_genes.items():
@@ -841,26 +832,21 @@ def mutate(context: Context, individual: Individual) -> None:
 
         target_genes -= individual.genome
 
-        # Mutation is impossible.
         if not target_genes:
             return
 
-        # Mutation with a limited number of attempts.
         attempts = 0
         while attempts < MUTATION_ATTEMPTS:
             attempts += 1
 
-            # Gene selection.
             gene = choice(tuple(target_genes))
 
             with suppress(AssertionError):
                 return individual.extend_genome(gene)
 
     if random() < GENOME_SHRINKAGE_RATE:
-        # Gene selection.
         gene = choice(tuple(individual.genome))
 
-        # Mutation.
         return individual.shrink_genome(gene)
 
 
@@ -920,7 +906,6 @@ def evolve_population(
         #  can trigger an error. The bug is not critical, but it is
         #  desirable to fix it.
         with suppress(AssertionError):
-            # Extract the offspring from the mother.
             for island in beta.islands:
                 if valid(island):
                     population.append(island)
@@ -944,10 +929,9 @@ def generate(context: Context) -> Crossword:
     population = init_population(context)
 
     while True:
-        # Evolutionary step.
         population = evolve_population(context, population)
 
-        # Check if the population contains a valid individual.
+        # Check if the population contains a predicate individual.
         predicate = next(
             filter(
                 lambda individual: len(individual.word_head) == len(context.words),
@@ -958,3 +942,14 @@ def generate(context: Context) -> Crossword:
 
         if predicate:
             return predicate.adjusted_heads
+
+
+__all__ = (
+    "Loc",
+    "Ori",
+    "WordHead",
+    "Crossword",
+    "Context",
+    "output_crossword",
+    "generate",
+)
