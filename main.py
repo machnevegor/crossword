@@ -235,6 +235,10 @@ class WordHead:
         return f"{self.loc.row} {self.loc.col} {self.ori.value}"
 
 
+Crossword = dict[str, WordHead]
+"""The crossword grid in the form of word-to-head mapping."""
+
+
 # --- I/O --- #
 
 
@@ -318,20 +322,16 @@ class Context:
                 self._cross_words(a_word, self.words[j])
 
 
-def output_individual(context: Context, filename: str, individual: Individual) -> None:
-    """Write the individual to the output file.
+def output_crossword(context: Context, filename: str, crossword: Crossword) -> None:
+    """Write the crossword to the output file.
 
     Args:
         context (Context): The context of crossword generation.
         filename (str): The path to the output file.
-        individual (Individual): The individual to output.
+        crossword (Crossword): The crossword to output.
     """
-    # Make the coordinates non-negative.
-    heads = individual.adjust_heads()
-
     with open(filename, "w", encoding="utf-8") as file:
-        # Write word-by-word.
-        for head in map(heads.get, context.words):
+        for head in map(crossword.get, context.words):
             file.write(f"{head}\n")
 
 
@@ -383,7 +383,7 @@ class Individual:
     inserted.
     """
 
-    word_head: dict[str, WordHead] = field(default_factory=dict)
+    word_head: Crossword = field(default_factory=dict)
     """The word-to-head mapping."""
     word_genes: defaultdict[str, set[Gene]] = field(
         default_factory=lambda: defaultdict(set)
@@ -392,11 +392,7 @@ class Individual:
 
     @property
     def view_box(self) -> tuple[Loc, Loc]:
-        """The boundaries of the crossword grid.
-
-        Returns:
-            tuple[Loc, Loc]: Lower left and upper right corners of the grid.
-        """
+        """Lower left and upper right corners of the grid."""
         min_row, max_row = 0, 0
         min_col, max_col = 0, 0
 
@@ -410,12 +406,54 @@ class Individual:
         return Loc(row=min_row, col=min_col), Loc(row=max_row, col=max_col)
 
     @property
-    def islands(self) -> Iterator[Individual]:
-        """Disjointed gene islands of the individual's genome.
-
-        Yields:
-            Individual: An island in the form of a new individual.
+    def adjusted_grid(self) -> dict[Loc, Cell]:
+        """Adjusted grid with non-negative coordinates. If the grid
+        needs to be transposed, the cells will be moved.
         """
+        min_loc, max_loc = self.view_box
+
+        # Check if the grid needs to be transposed.
+        transpose = better_transpose(min_loc, max_loc)
+
+        # Adjust the grid.
+        adjusted_grid = {}
+
+        for loc, cell in self.grid.items():
+            if not cell:
+                continue
+
+            adjusted_loc = Loc.adjust(loc, min_loc, transpose)
+
+            adjusted_grid[adjusted_loc] = cell
+
+        return adjusted_grid
+
+    @property
+    def adjusted_heads(self) -> Crossword:
+        """Adjusted word-to-head mapping. If the grid needs to be
+        transposed, the cells will be moved.
+        """
+        min_loc, max_loc = self.view_box
+
+        # Check if the grid needs to be transposed.
+        transpose = better_transpose(min_loc, max_loc)
+
+        # Adjust the word-to-head mapping.
+        adjusted_heads = {}
+
+        for word, head in self.word_head.items():
+            adjusted_loc = Loc.adjust(head.loc, min_loc, transpose)
+            adjusted_ori = Ori.adjust(head.ori, transpose)
+
+            adjusted_heads[word] = WordHead(
+                word=word, loc=adjusted_loc, ori=adjusted_ori
+            )
+
+        return adjusted_heads
+
+    @property
+    def islands(self) -> Iterator[Individual]:
+        """Disjointed gene islands of the individual's genome."""
         visited = set()
         stack = []
 
@@ -448,7 +486,7 @@ class Individual:
             str: The serialized individual.
         """
         # Build a route for serialization.
-        route = sorted(self.adjust_grid().items(), key=lambda item: item[0])
+        route = sorted(self.adjusted_grid.items(), key=lambda item: item[0])
 
         prev_row, prev_col = 0, 0
         serialized = ""
@@ -563,55 +601,6 @@ class Individual:
             individual.extend_genome(gene)
 
         return individual
-
-    def adjust_grid(self) -> dict[Loc, Cell]:
-        """Make the grid coordinates non-negative.
-
-        Returns:
-            dict[Loc, Cell]: Adjusted grid.
-        """
-        min_loc, max_loc = self.view_box
-
-        # Check if the grid needs to be transposed.
-        transpose = better_transpose(min_loc, max_loc)
-
-        # Adjust the grid.
-        adjusted_grid = {}
-
-        for loc, cell in self.grid.items():
-            if not cell:
-                continue
-
-            adjusted_loc = Loc.adjust(loc, min_loc, transpose)
-
-            adjusted_grid[adjusted_loc] = cell
-
-        return adjusted_grid
-
-    def adjust_heads(self) -> dict[str, WordHead]:
-        """Make the coordinates non-negative and transpose the
-        crossword grid as necessary.
-
-        Returns:
-            dict[str, WordHead]: Adjusted word-to-head mapping.
-        """
-        min_loc, max_loc = self.view_box
-
-        # Check if the grid needs to be transposed.
-        transpose = better_transpose(min_loc, max_loc)
-
-        # Adjust the word-to-head mapping.
-        adjusted_heads = {}
-
-        for word, head in self.word_head.items():
-            adjusted_loc = Loc.adjust(head.loc, min_loc, transpose)
-            adjusted_ori = Ori.adjust(head.ori, transpose)
-
-            adjusted_heads[word] = WordHead(
-                word=word, loc=adjusted_loc, ori=adjusted_ori
-            )
-
-        return adjusted_heads
 
     def _init_genome(self, gene: Gene) -> None:
         """Initialize the genome with the first gene.
@@ -806,7 +795,7 @@ class Individual:
 # --- GENETIC ALGORITHM --- #
 
 
-def initialize_population(context: Context) -> list[Individual]:
+def init_population(context: Context) -> list[Individual]:
     """Create the initial population for crossword generation.
 
     Args:
@@ -852,6 +841,7 @@ def mutate(context: Context, individual: Individual) -> None:
 
         target_genes -= individual.genome
 
+        # Mutation is impossible.
         if not target_genes:
             return
 
@@ -942,23 +932,20 @@ def evolve_population(
     return population[:POPULATION_LIMIT]
 
 
-def generate(context: Context) -> Individual:
+def generate(context: Context) -> Crossword:
     """Generate the crossword.
 
     Args:
         context (Context): The context of crossword generation.
 
     Returns:
-        Individual: The generated crossword.
+        Crossword: The generated crossword.
     """
-    population = initialize_population(context)
+    population = init_population(context)
 
     while True:
         # Evolutionary step.
         population = evolve_population(context, population)
-
-        print(f"Population size: {len(population)}")
-        print(f"Best fitness: {fitness(population[0])}")
 
         # Check if the population contains a valid individual.
         predicate = next(
@@ -970,22 +957,4 @@ def generate(context: Context) -> Individual:
         )
 
         if predicate:
-            return predicate
-
-
-def main() -> None:
-    # Initialize the context.
-    context = Context.from_file("input.txt")
-
-    # Generate the crossword.
-    individual = generate(context)
-
-    # Output the crossword.
-    output_individual(context, "output.txt", individual)
-
-    # Print the crossword.
-    print(individual)
-
-
-if __name__ == "__main__":
-    main()
+            return predicate.adjusted_heads
