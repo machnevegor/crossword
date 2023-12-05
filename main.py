@@ -18,24 +18,27 @@ from typing import Iterator, Iterable
 WORD_PATTERN = r"^[a-z]{2,20}$"
 """Regular expression to assert a crossword word."""
 
-MUTATION_ATTEMPTS = 10
-"""The number of attempts to mutate an individual."""
-GENOME_EXTENSION_RATE = 0.5
-"""The probability that a mutation will lead to genome expansion."""
-GENOME_SHRINKAGE_RATE = 0.01
-"""The probability that a mutation will lead to genome shrinkage."""
-
 ROW_SIZE = 20
 """Row size of the crossword grid."""
 COL_SIZE = 20
 """Column size of the crossword grid."""
+
+MUTATION_ATTEMPTS = 10
+"""The number of attempts to mutate an individual."""
+GENOME_EXTENSION_RATE = 0.5
+"""The probability that a mutation will lead to genome expansion."""
+GENOME_SHRINKAGE_RATE = 0.15
+"""The probability that a mutation will lead to genome shrinkage."""
+
+POPULATION_LIMIT = 256
+"""The maximum number of individuals in the population."""
 
 
 # --- DATA TYPES --- #
 
 
 @dataclass(order=True, frozen=True)
-class Char:
+class Crosschar:
     """The letter in the crossword word."""
 
     word: str
@@ -45,43 +48,53 @@ class Char:
 
     @property
     def value(self) -> str:
-        """The value of the char."""
+        """The value of the `Crosschar`."""
         return self.word[self.index]
 
     def __post_init__(self) -> None:
-        """Post-initialization checks."""
-        assert 0 <= self.index < len(self.word), "Invalid char, index out of range"
+        """Post-initialization checks.
+
+        Raises:
+            AssertionError: Index is out of range.
+        """
+        assert (
+            0 <= self.index < len(self.word)
+        ), "Invalid `Crosschar`, index out of range"
 
 
 @dataclass(frozen=True)
 class Gene:
     """The gene of the crossword genome."""
 
-    a: Char
+    a: Crosschar
     """The A-component of the gene."""
-    b: Char
+    b: Crosschar
     """The B-component of the gene."""
 
     def __post_init__(self) -> None:
-        """Post-initialization checks."""
-        assert self.a < self.b, "Invalid order of gene components"
+        """Post-initialization checks.
 
-    def __iter__(self) -> Iterator[Char]:
+        Raises:
+            AssertionError: Components are NOT ordered.
+        """
+        assert self.a < self.b, "Invalid `Gene`, components are NOT ordered"
+
+    def __iter__(self) -> Iterator[Crosschar]:
         """Iterate over the gene components.
 
         Yields:
-            Char: The gene component.
+            Crosschar: The gene component.
         """
         yield self.a
         yield self.b
 
     @classmethod
-    def safe_init(cls, a: Char, b: Char) -> Gene:
+    def safe_init(cls, a: Crosschar, b: Crosschar) -> Gene:
         """Initialize the gene with the components in the proper order.
 
         Args:
-            a (Char): The A-component of the gene.
-            b (Char): The B-component of the gene.
+            a (Crosschar): The A-component of the gene.
+            b (Crosschar): The B-component of the gene.
 
         Returns:
             Gene: The gene with the components in the proper order.
@@ -139,24 +152,29 @@ class Loc:
 class Cell:
     """The cell of the crossword grid."""
 
-    hor: Char | None = field(default=None)
+    hor: Crosschar | None = field(default=None)
     """The horizontal char of the cell."""
-    ver: Char | None = field(default=None)
+    ver: Crosschar | None = field(default=None)
     """The vertical char of the cell."""
 
     @property
     def value(self) -> str | None:
-        """The value of the cell."""
+        """The value of the cell.
+
+        Raises:
+            AssertionError: Chars do NOT match.
+        """
         if not self:
             return None
 
         assert (
             self.hor is None or self.ver is None or self.hor.value == self.ver.value
-        ), "Invalid cell, chars do NOT match"
+        ), "Invalid `Cell`, chars do NOT match"
 
         return self.hor.value if self.hor else self.ver.value
 
     def __bool__(self) -> bool:
+        """Check if the cell is NOT empty."""
         return self.hor is not None or self.ver is not None
 
 
@@ -220,6 +238,18 @@ class WordHead:
 # --- I/O --- #
 
 
+def assert_word(word: str) -> None:
+    """Assert that the word is valid.
+
+    Args:
+        word (str): The word to assert.
+
+    Raises:
+        AssertionError: Word does NOT match the pattern.
+    """
+    assert match(WORD_PATTERN, word), "Invalid word"
+
+
 @dataclass(kw_only=True)
 class Context:
     """The context of crossword generation."""
@@ -235,8 +265,14 @@ class Context:
     """The set of genes corresponding to each word."""
 
     def __post_init__(self) -> None:
-        """Post-initialization checks and preprocessing."""
-        self._assert_words()
+        """Post-initialization checks and preprocessing.
+
+        Raises:
+            AssertionError: Word does NOT match the pattern.
+        """
+        for word in self.words:
+            assert_word(word)
+
         self._comb_genes()
 
     @classmethod
@@ -254,11 +290,6 @@ class Context:
 
             return cls(words=list(lines))
 
-    def _assert_words(self) -> None:
-        """Assert that all words are valid."""
-        for word in self.words:
-            assert match(WORD_PATTERN, word), "Invalid word"
-
     def _cross_words(self, a_word: str, b_word: str) -> None:
         """Find all possible intersections (genes) between the two
         words. Register the genes in the context.
@@ -271,7 +302,8 @@ class Context:
             for j, b_char in enumerate(b_word):
                 if a_char == b_char:
                     gene = Gene.safe_init(
-                        a=Char(word=a_word, index=i), b=Char(word=b_word, index=j)
+                        a=Crosschar(word=a_word, index=i),
+                        b=Crosschar(word=b_word, index=j),
                     )
 
                     self.genes.add(gene)
@@ -287,7 +319,7 @@ class Context:
 
 
 def output_individual(context: Context, filename: str, individual: Individual) -> None:
-    """Output the individual to the output file.
+    """Write the individual to the output file.
 
     Args:
         context (Context): The context of crossword generation.
@@ -299,7 +331,7 @@ def output_individual(context: Context, filename: str, individual: Individual) -
 
     with open(filename, "w", encoding="utf-8") as file:
         # Write word-by-word.
-        for head in map(lambda word: heads[word], context.words):
+        for head in map(heads.get, context.words):
             file.write(f"{head}\n")
 
 
@@ -316,15 +348,12 @@ def view_size(min_loc: Loc, max_loc: Loc) -> tuple[int, int]:
     Returns:
         tuple[int, int]: The row and column size of the grid.
     """
-    row_size = max_loc.row - min_loc.row + 1
-    col_size = max_loc.col - min_loc.col + 1
-
-    return row_size, col_size
+    return max_loc.row - min_loc.row + 1, max_loc.col - min_loc.col + 1
 
 
 def better_transpose(min_loc: Loc, max_loc: Loc) -> bool:
-    """Check if the transposed variant of the grid is better than the
-    original one.
+    """Check if the transposed variant of the crossword grid is better
+    than the original one.
 
     Args:
         min_loc (Loc): The lower left corner of the grid.
@@ -410,7 +439,7 @@ class Individual:
                 ):
                     stack += adjacent_genes
 
-            yield Individual.safe_init(island)
+            yield Individual.safe_init(genome=island)
 
     def __str__(self) -> str:
         """Serialize an individual into the form of a string matrix.
@@ -444,6 +473,11 @@ class Individual:
 
         Args:
             gene (Gene): The gene to add. Must be adjacent.
+
+        Raises:
+            AssertionError: Word components are already in the genome.
+            AssertionError: Gene is NOT adjacent to the genome.
+            AssertionError: Gene is non-insertable.
         """
         if gene in self.genome:
             return
@@ -458,13 +492,15 @@ class Individual:
             # The set of genome and gene components are disjointed.
             assert not self.genome, "Non-insertable gene"
 
-            # The genome is empty and the initial gene needs to be inserted into the individual.
+            # The genome is empty and the initial gene needs to be
+            # inserted into the individual.
             return self._init_genome(gene)
 
-        # Preliminary insertion checks.
         orientor, shift, target = (
             (a_head, gene.a.index, gene.b) if a_head else (b_head, gene.b.index, gene.a)
         )
+
+        # Preliminary insertion checks.
         assert self._preinsertion(orientor, shift, target), "Non-insertable gene"
 
         # Insertion.
@@ -475,9 +511,11 @@ class Individual:
 
         Args:
             gene (Gene): The gene to remove.
+
+        Raises:
+            AssertionError: Gene is NOT in the genome.
         """
-        if gene not in self.genome:
-            return
+        assert gene in self.genome, "Gene is NOT in the genome"
 
         for head in map(lambda char: self.word_head[char.word], gene):
             cursor = head.loc
@@ -487,8 +525,8 @@ class Individual:
                         if self.grid[cursor].hor is None:
                             break
 
-                        # Uncross the orthogonal char.
                         if orthogonal_char := self.grid[cursor].ver:
+                            # Uncross the orthogonal char.
                             self._uncross(self.grid[cursor].hor, orthogonal_char)
 
                         self.grid[cursor].hor = None
@@ -496,8 +534,8 @@ class Individual:
                         if self.grid[cursor].ver is None:
                             break
 
-                        # Uncross the orthogonal char.
                         if orthogonal_char := self.grid[cursor].hor:
+                            # Uncross the orthogonal char.
                             self._uncross(self.grid[cursor].ver, orthogonal_char)
 
                         self.grid[cursor].ver = None
@@ -587,7 +625,7 @@ class Individual:
         for i in range(len(gene.a.word)):
             loc = Loc(row=0, col=i)
 
-            self.grid[loc].hor = Char(word=gene.a.word, index=i)
+            self.grid[loc].hor = Crosschar(word=gene.a.word, index=i)
 
             if i == 0:
                 self.word_head[gene.a.word] = WordHead(
@@ -600,7 +638,7 @@ class Individual:
         for i in range(len(gene.b.word)):
             loc = Loc(row=-gene.b.index + i, col=gene.a.index)
 
-            self.grid[loc].ver = Char(word=gene.b.word, index=i)
+            self.grid[loc].ver = Crosschar(word=gene.b.word, index=i)
 
             if i == 0:
                 self.word_head[gene.b.word] = WordHead(
@@ -609,7 +647,7 @@ class Individual:
 
         self.word_genes[gene.b.word].add(gene)
 
-    def _preinsertion(self, orientor: WordHead, shift: int, target: Char) -> bool:
+    def _preinsertion(self, orientor: WordHead, shift: int, target: Crosschar) -> bool:
         """Check if the gene can be inserted into the individual.
 
         Args:
@@ -617,7 +655,7 @@ class Individual:
                 that is already on the crossword grid.
             shift (int): Shift in direction relative to a word already
                 inserted in the crossword grid.
-            target (Char): The word (gene component) to insert.
+            target (Crosschar): The word (gene component) to insert.
 
         Returns:
             bool: True if the gene can be inserted, False otherwise.
@@ -633,7 +671,7 @@ class Individual:
                     )
 
                     # Check if the cell is already occupied in the considered orientation.
-                    if self.grid[loc].ver is not None:
+                    if self.grid[loc].ver:
                         return False
 
                     # Check the cell above the word.
@@ -661,7 +699,7 @@ class Individual:
                     )
 
                     # Check if the cell is already occupied in the considered orientation.
-                    if self.grid[loc].hor is not None:
+                    if self.grid[loc].hor:
                         return False
 
                     # Check the cell to the left of the word.
@@ -685,12 +723,12 @@ class Individual:
 
         return True
 
-    def _cross(self, a: Char, b: Char) -> None:
+    def _cross(self, a: Crosschar, b: Crosschar) -> None:
         """Add a new gene to the individual's genome.
 
         Args:
-            a (Char): The A-component of the gene.
-            b (Char): The B-component of the gene.
+            a (Crosschar): The A-component of the gene.
+            b (Crosschar): The B-component of the gene.
         """
         gene = Gene.safe_init(a=a, b=b)
 
@@ -699,7 +737,7 @@ class Individual:
         self.word_genes[a.word].add(gene)
         self.word_genes[b.word].add(gene)
 
-    def _insertion(self, orientor: WordHead, shift: int, target: Char) -> None:
+    def _insertion(self, orientor: WordHead, shift: int, target: Crosschar) -> None:
         """Insert the gene into the individual's crossword grid.
 
         Args:
@@ -707,13 +745,13 @@ class Individual:
                 that is already on the crossword grid.
             shift (int): Shift in direction relative to a word already
                 inserted in the crossword grid.
-            target (Char): The word (gene component) to insert.
+            target (Crosschar): The word (gene component) to insert.
         """
         for i in range(len(target.word)):
+            char = Crosschar(word=target.word, index=i)
+
             match orientor.ori:
                 case Ori.HOR:
-                    char = Char(word=target.word, index=i)
-
                     loc = Loc(
                         row=orientor.loc.row - target.index + i,
                         col=orientor.loc.col + shift,
@@ -726,14 +764,12 @@ class Individual:
                     # Grid filling.
                     self.grid[loc].ver = char
 
-                    # Word head registration.
                     if i == 0:
+                        # Word head registration.
                         self.word_head[target.word] = WordHead(
                             word=target.word, loc=loc, ori=Ori.VER
                         )
                 case Ori.VER:
-                    char = Char(word=target.word, index=i)
-
                     loc = Loc(
                         row=orientor.loc.row + shift,
                         col=orientor.loc.col - target.index + i,
@@ -746,18 +782,18 @@ class Individual:
                     # Grid filling.
                     self.grid[loc].hor = char
 
-                    # Word head registration.
                     if i == 0:
+                        # Word head registration.
                         self.word_head[target.word] = WordHead(
                             word=target.word, loc=loc, ori=Ori.HOR
                         )
 
-    def _uncross(self, a: Char, b: Char) -> None:
+    def _uncross(self, a: Crosschar, b: Crosschar) -> None:
         """Remove a gene from the individual's genome.
 
         Args:
-            a (Char): The A-component of the gene.
-            b (Char): The B-component of the gene.
+            a (Crosschar): The A-component of the gene.
+            b (Crosschar): The B-component of the gene.
         """
         gene = Gene.safe_init(a=a, b=b)
 
@@ -779,13 +815,13 @@ def initialize_population(context: Context) -> list[Individual]:
     Returns:
         list[Individual]: The initial population.
     """
-    return [Individual.safe_init({gene}) for gene in context.genes]
+    return [Individual.safe_init(genome=[gene]) for gene in context.genes]
 
 
 def crossover(mother: Individual, father: Individual) -> None:
-    """Crossover of two individuals to produce an offspring. The
-    function does NOT create new offspring, it just saturates one
-    of the parents.
+    """Crossover two individuals to create an offspring. This action
+    does not generate a fresh offspring, but instead saturates one of
+    the parents. Its intent is to expedite the evolution process.
 
     Args:
         mother (Individual): Parent to saturate.
@@ -806,44 +842,36 @@ def mutate(context: Context, individual: Individual) -> None:
         context (Context): The context of crossword generation.
         individual (Individual): The individual to mutate.
     """
-    attemts = 0
-    while attemts < MUTATION_ATTEMPTS:
-        attemts += 1
+    if random() < GENOME_EXTENSION_RATE:
+        # Estimate the set of genes that can potentially be added to the genome.
+        target_genes = set()
 
-        # Genome extension.
-        if random() < GENOME_EXTENSION_RATE:
-            target_genes = set()
+        for word, genes in context.word_genes.items():
+            if word in individual.word_head:
+                target_genes |= genes
 
-            for word, genes in context.word_genes.items():
-                if word in individual.word_head:
-                    target_genes |= genes
+        target_genes -= individual.genome
 
-            target_genes -= individual.genome
+        if not target_genes:
+            return
 
-            if not target_genes:
-                continue
+        # Mutation with a limited number of attempts.
+        attempts = 0
+        while attempts < MUTATION_ATTEMPTS:
+            attempts += 1
 
             # Gene selection.
             gene = choice(tuple(target_genes))
 
             with suppress(AssertionError):
-                # Mutation (attempt).
-                individual.extend_genome(gene)
+                return individual.extend_genome(gene)
 
-                break
+    if random() < GENOME_SHRINKAGE_RATE:
+        # Gene selection.
+        gene = choice(tuple(individual.genome))
 
-        # Genome shrinkage.
-        if random() < GENOME_SHRINKAGE_RATE:
-            if not individual.genome:
-                continue
-
-            # Gene selection.
-            gene = choice(tuple(individual.genome))
-
-            # Mutation.
-            individual.shrink_genome(gene)
-
-            break
+        # Mutation.
+        return individual.shrink_genome(gene)
 
 
 def valid(individual: Individual) -> bool:
@@ -873,9 +901,9 @@ def fitness(individual: Individual) -> float:
         individual (Individual): The individual to evaluate.
 
     Returns:
-        float: The individual's fitness.
+        int: The individual's fitness.
     """
-    return -len(individual.genome)
+    return -len(individual.word_head) * len(individual.genome)
 
 
 def evolve_population(
@@ -898,9 +926,11 @@ def evolve_population(
 
         mutate(context, beta)
 
-        # TODO: In some scenarios, splitting an individual into islands can trigger an error. The bug is not
-        #  critical, but it is desirable to fix it.
+        # TODO: In some scenarios, splitting an individual into islands
+        #  can trigger an error. The bug is not critical, but it is
+        #  desirable to fix it.
         with suppress(AssertionError):
+            # Extract the offspring from the mother.
             for island in beta.islands:
                 if valid(island):
                     population.append(island)
@@ -909,7 +939,7 @@ def evolve_population(
 
     population.sort(key=fitness)
 
-    return population[: len(context.genes)]
+    return population[:POPULATION_LIMIT]
 
 
 def generate(context: Context) -> Individual:
@@ -926,6 +956,9 @@ def generate(context: Context) -> Individual:
     while True:
         # Evolutionary step.
         population = evolve_population(context, population)
+
+        print(f"Population size: {len(population)}")
+        print(f"Best fitness: {fitness(population[0])}")
 
         # Check if the population contains a valid individual.
         predicate = next(
