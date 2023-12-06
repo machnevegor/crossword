@@ -90,8 +90,12 @@ class Benchmark(BaseModel):
 
 **Note** that the following generation parameters were used for benchmarking:
 
-| Parameter Name                         | Description                                                    | Value  |
-| -------------------------------------- | -------------------------------------------------------------- | ------ |
-| [MUTATION_ATTEMPTS](./main.py#L26)     | The number of attempts to mutate an individual.                | `10`   |
-| [GENOME_EXTENSION_RATE](./main.py#L28) | The probability that a mutation will lead to genome expansion. | `0.5`  |
-| [GENOME_SHRINKAGE_RATE](./main.py#L30) | The probability that a mutation will lead to genome shrinkage. | `0.15` |
+| Constant                               | Description                                                    | Value           |
+| -------------------------------------- | -------------------------------------------------------------- | --------------- |
+| [WORD_PATTERN](./main.py#L18)          | Regular expression to assert a crossword word.                 | `^[a-z]{2,20}$` |
+| [ROW_SIZE](./main.py#L21)              | Row size of the crossword grid.                                | `20`            |
+| [COL_SIZE](./main.py#L23)              | Column size of the crossword grid.                             | `20`            |
+| [MUTATION_ATTEMPTS](./main.py#L26)     | The number of attempts to mutate an individual.                | `10`            |
+| [GENOME_EXTENSION_RATE](./main.py#L28) | The probability that a mutation will lead to genome expansion. | `0.5`           |
+| [GENOME_SHRINKAGE_RATE](./main.py#L30) | The probability that a mutation will lead to genome shrinkage. | `0.15`          |
+| [POPULATION_LIMIT](./main.py#L32)      | The maximum number of individuals in the population.           | `256`           |
