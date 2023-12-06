@@ -12,46 +12,68 @@ class Status(str, Enum):
     """During the crossword generation, the population has degenerated."""
 
 
-class Launch(BaseModel):
-    """The instance of crossword generation launch."""
+class SuccessLaunch(BaseModel):
+    """The successful execution of crossword generation."""
 
+    status: Status = Status.OK
+    """The status of crossword generation."""
     time: int
     """The time of crossword generation."""
-    status: Status
+    fitness: int
+    """The fitness of the generated crossword."""
+
+
+class FailureLaunch(BaseModel):
+    """The failed execution of crossword generation."""
+
+    status: Status = Status.DEGENERATED
     """The status of crossword generation."""
 
 
-class TimeStat(BaseModel):
-    """The time stats for the crossword generation."""
+Launch = SuccessLaunch | FailureLaunch
+"""The instance of crossword generation launch."""
+
+
+class SampleRange(BaseModel):
+    """The range of the sample values."""
+
+    min: int
+    """The minimum value in the sample."""
+    max: int
+    """The maximum value in the sample."""
+
+
+class SampleStat(BaseModel):
+    """The statistical characteristics of the sample."""
 
     size: int
     """The number of representatives in the sample."""
-    mean: int | None
-    """The mean of the sample. None (null) if the sample is empty."""
-    variance: int | None
-    """The variance of the sample. None (null) if the sample is empty
-    or consists of only one representative.
-    """
+    mean: int
+    """The mean of the sample."""
+    standard_deviation: int
+    """The standard deviation of the sample."""
+    range: SampleRange
+    """The range of the sample."""
 
 
 class LaunchStat(BaseModel):
-    """The launch stats for the crossword generation."""
+    """The launch stats for crossword generation."""
 
-    success: TimeStat
-    """The time stats for the successful launches."""
-    failure: TimeStat
-    """The time stats for the failed launches."""
-    total: TimeStat
-    """The time stats for overall launches."""
+    time: SampleStat
+    """The time stats for successful launches."""
+    fitness: SampleStat
+    """The fitness stats for the launches."""
+    setbacks: int
+    """The amount of failures during the launches."""
 
 
 class Benchmark(BaseModel):
     """Benchmark for crossword generation based on multiple runs of a
-    specific test file.
+    given sample input file.
     """
 
     filename: str
-    """The path to the test input file."""
+    """The path to the input file."""
 
     words: int
     """The number of words in the input file."""
@@ -59,7 +81,7 @@ class Benchmark(BaseModel):
     """The total number of word intersections possible."""
 
     launches: list[Launch]
-    """The list of launches."""
+    """The launch list with execution information."""
 
     stats: LaunchStat
-    """Time stats based on the examined launches."""
+    """Stats based on the examined launches."""
