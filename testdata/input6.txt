@@ -1,0 +1,7 @@
+virtual
+torture
+textile
+routine
+pending
+contracts
+vietnamese

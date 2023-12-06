@@ -1,0 +1,11 @@
+pam
+pdf
+pics
+examples
+packages
+explaining
+violations
+christians
+reductions
+exceptions
+furnishings
