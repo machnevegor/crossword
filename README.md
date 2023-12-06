@@ -172,3 +172,9 @@ class Benchmark(BaseModel):
 | [GENOME_EXTENSION_RATE](./main.py#L28) | The probability that a mutation will lead to genome expansion. | `0.5`           |
 | [GENOME_SHRINKAGE_RATE](./main.py#L30) | The probability that a mutation will lead to genome shrinkage. | `0.15`          |
 | [POPULATION_LIMIT](./main.py#L32)      | The maximum number of individuals in the population.           | `256`           |
+
+## Results
+
+![Maximum and average time](./benchmark/time.png)
+
+![Maximum and average fitness](./benchmark/fitness.png)
